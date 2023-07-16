@@ -7,6 +7,59 @@ import (
 )
 
 func main() {
+	var numCalcsCreated int
+	calcPool := &sync.Pool{
+		New: func() interface{} {
+			numCalcsCreated += 1
+			mem := make([]byte, 1024)
+			return &mem
+		},
+	}
+
+	calcPool.Put(calcPool.New())
+	calcPool.Put(calcPool.New())
+	calcPool.Put(calcPool.New())
+	calcPool.Put(calcPool.New())
+
+	const numWorkers = 1024 * 1024
+	var wg sync.WaitGroup
+
+	wg.Add(numWorkers)
+
+	for i := numWorkers; i > 0; i-- {
+		go func() {
+			defer wg.Done()
+
+			mem := calcPool.Get().(*[]byte)
+			defer calcPool.Put(mem)
+
+			// fmt.Println(mem)
+		}()
+	}
+
+	wg.Wait()
+
+	fmt.Printf("%d calculators were created.", numCalcsCreated)
+
+}
+
+func poolGetPut() {
+	// This is thread safe, so we could use get and put on gorotines with
+	// confidence
+	myPool := &sync.Pool{
+		New: func() interface{} {
+			fmt.Println("Creating a new Instance")
+			return struct{}{}
+		},
+	}
+
+	myPool.Get()
+	instance := myPool.Get()
+	myPool.Put(instance)
+	myPool.Get()
+}
+
+func doOnceWithDeadlock() {
 	var onceA, onceB sync.Once
 	var initB func()
 
@@ -18,9 +71,7 @@ func main() {
 	}
 
 	onceA.Do(initA)
-
 }
-
 func doOnce() {
 	// grep -ir sync.Once $(go env GOROOT)/src | wc -l
 	var count int
