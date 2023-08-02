@@ -49,6 +49,7 @@ func repeatFn(done <-chan interface{}, fn func() interface{}) <-chan interface{}
 
 	go func() {
 		defer close(valueStream)
+
 		for {
 			select {
 			case <-done:
@@ -135,8 +136,95 @@ func fanIn(done <-chan interface{}, channels ...<-chan interface{}) <-chan inter
 
 	return joinChannel
 }
+
+func orDone(done, c <-chan interface{}) <-chan interface{} {
+	orStream := make(chan interface{})
+
+	go func() {
+		defer close(orStream)
+		for value := range c {
+			select {
+			case <-done:
+				return
+			case orStream <- value:
+			}
+		}
+	}()
+
+	return orStream
+}
+
+func orDone2(done, c <-chan interface{}) <-chan interface{} {
+	orStream := make(chan interface{})
+
+	go func() {
+		defer close(orStream)
+
+		for {
+			select {
+			case <-done:
+				return
+			case v, ok := <-c:
+				if ok == false {
+					return
+				}
+				select {
+				case orStream <- v:
+				case <-done:
+				}
+			}
+		}
+	}()
+
+	return orStream
+}
+
+// This function will send one channel data to two channels concurrently
+func tee(done, in <-chan interface{}) (_, _ <-chan interface{}) {
+	out1 := make(chan interface{})
+	out2 := make(chan interface{})
+
+	go func() {
+		defer close(out1)
+		defer close(out2)
+
+		for v := range orDone(done, in) {
+			var out1, out2 = out1, out2 // Here we are shadowing the global variables
+
+			for i := 0; i < 2; i++ { // As slect is randon we need to ensure that both of them are being called by sending a value
+				// thus we iterate over the select twice
+				select {
+				case <-done:
+					break
+				case out1 <- v:
+					out1 = nil // And once the channel already has the value then we put it as nil to avoid resending the value
+					// Thus leaving the space to out2
+				case out2 <- v:
+					out2 = nil
+				}
+			}
+		}
+	}()
+
+	return out1, out2
+}
+
 func main() {
-	fanOutFanInt()
+	done := make(chan interface{})
+	//defer close(done)
+
+	out1, out2 := tee(done, take(done, repeat(done, 1, 2), 10))
+
+	// go func() {
+	// 	time.Sleep(3 * time.Second)
+	// 	close(done)
+	// }()
+
+	for val1 := range out1 {
+		fmt.Printf("Out1: %v, out2: %v\n", val1, <-out2)
+		close(done)
+
+	}
 }
 
 func fanOutFanInt() {
@@ -158,7 +246,7 @@ func fanOutFanInt() {
 	fmt.Println("Primes")
 
 	start := time.Now()
-	for v := range take(done, fanIn(done, finder...), 100) {
+	for v := range take(done, fanIn(done, finder...), 50) {
 		fmt.Printf("\t%d\n", v)
 	}
 	fmt.Printf("It tooks: %v", time.Since(start))
