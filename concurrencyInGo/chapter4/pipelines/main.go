@@ -209,9 +209,70 @@ func tee(done, in <-chan interface{}) (_, _ <-chan interface{}) {
 	return out1, out2
 }
 
+func bridge(done <-chan interface{}, chanStream <-chan chan interface{}) <-chan interface{} {
+
+	valStream := make(chan interface{})
+
+	go func() {
+		defer close(valStream)
+
+		for {
+			stream := make(chan interface{})
+
+			// Here we just pick a stream from the channel
+			select {
+			case maybeStream, ok := <-chanStream:
+				if ok == false {
+					return
+				}
+				stream = maybeStream
+			case <-done:
+				return
+			}
+
+			// Here we are going to read values from it
+
+			for val := range orDone(done, stream) {
+				select {
+				case valStream <- val:
+				case <-done:
+				}
+			}
+
+		}
+	}()
+
+	return valStream
+
+}
+
 func main() {
 	done := make(chan interface{})
-	//defer close(done)
+	defer close(done)
+
+	genChanOfChans := func() <-chan chan interface{} {
+		chanStream := make(chan chan interface{})
+
+		go func() {
+			defer close(chanStream)
+			for i := 0; i < 10; i++ {
+				stream := make(chan interface{}, 1)
+				stream <- i
+				close(stream)
+				chanStream <- stream
+			}
+		}()
+
+		return chanStream
+	}
+
+	for val1 := range bridge(done, genChanOfChans()) {
+		fmt.Printf("%v ", val1)
+	}
+}
+
+func teeExample() {
+	done := make(chan interface{})
 
 	out1, out2 := tee(done, take(done, repeat(done, 1, 2), 10))
 
