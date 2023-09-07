@@ -44,6 +44,43 @@ func or(channels ...<-chan interface{}) <-chan interface{} {
 	return orStream
 
 }
+func bridge(done <-chan interface{}, chanStream <-chan (<-chan interface{})) <-chan interface{} {
+
+	valStream := make(chan interface{})
+
+	go func() {
+		defer close(valStream)
+
+		for {
+			stream := make(<-chan interface{})
+
+			// Here we just pick a stream from the channel
+			select {
+			case maybeStream, ok := <-chanStream:
+				if ok == false {
+					return
+				}
+				stream = maybeStream
+			case <-done:
+				return
+			}
+
+			// Here we are going to read values from it
+
+			for val := range or(done, stream) {
+				select {
+				case valStream <- val:
+				case <-done:
+				}
+			}
+
+		}
+	}()
+
+	return valStream
+
+}
+
 func newSteward( // This is the one that monitors the functions
 	timeout time.Duration,
 	startstartGoroutine startGoroutineFn,
@@ -93,13 +130,34 @@ func newSteward( // This is the one that monitors the functions
 	}
 }
 func main() {
-	// doWorkFn := func(
-	// 	done <-chan interface{},
-	// 	intList ...int,
-	// ) (startGoroutineFn, <-chan interface{}) {
-	// 	intChanStream := make(chan (<-chan interface{}))
-	// 	intStream := make()
-	// }
+	doWorkFn := func(
+		done <-chan interface{},
+		intList ...int,
+	) (startGoroutineFn, <-chan interface{}) {
+		intChanStream := make(chan (<-chan interface{}))
+		intStream := bridge(done, intChanStream)
+
+		doWork := func(
+			done <-chan interface{},
+			pulseInterval time.Duration,
+		) <-chan interface{} {
+			intStream := make(chan interface{})
+			heartbeat := make(chan interface{})
+
+			go func() {
+				defer close(intStream)
+				select {
+				case intChanStream <- intStream:
+				case <-done:
+					return
+				}
+			}()
+
+			return heartbeat
+		}
+
+		return doWork, intStream
+	}
 }
 
 func simpleWard() {
